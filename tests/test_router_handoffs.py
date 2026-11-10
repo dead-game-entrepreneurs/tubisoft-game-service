@@ -102,6 +102,27 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
             offset += header.size
         self.assertEqual(headers, [0xdb, 0xdb])
 
+    async def test_launcher_retry_returns_existing_pending_room_id(self):
+        registry = RoomRegistry()
+        authenticated, pending = {}, {}
+        with TemporaryDirectory() as directory:
+            database = Path(directory) / "accounts.sqlite3"
+            self.assertTrue(router.accounts.create_account(database, "host", "fixture-password"))
+            for _ in range(2):
+                writer = await self.launcher_session(database, "host", "fixture-password",
+                                                     authenticated, registry, pending)
+                offset = 0
+                while offset < len(writer.output):
+                    header = GSHeader.decode(writer.output[offset:offset + HEADER_SIZE])
+                    payload = writer.output[offset + HEADER_SIZE:offset + header.size]
+                    offset += header.size
+                self.assertEqual(header.message_type, 0x26)
+                self.assertEqual(data.decode(gsxor.decrypt(payload)),
+                                 [b"\xd5", ["192.0.2.1", "30000", "1000", ""]])
+        room = registry.activate(1000, "host", "192.0.2.2")
+        self.assertIsNotNone(room)
+        self.assertEqual(pending[(room.peer_ip, room.owner)], room.pending_until)
+
     async def test_owner_room_disconnect_clears_udp_registration_and_notifies_guest_without_logout(self):
         registry = RoomRegistry()
         host_ip, guest_ip = "192.0.2.2", "192.0.2.3"

@@ -73,7 +73,7 @@ class RoomRegistryTests(unittest.TestCase):
         registry.remove(room.room_id, "user", "192.0.2.2")
         self.assertEqual(registry.children(), [])
 
-    def test_rejects_unsupported_or_duplicate_requests(self):
+    def test_rejects_unsupported_requests_and_duplicate_active_rooms(self):
         registry = RoomRegistry()
         malformed = registration()
         malformed[2][7] = "not binary"
@@ -83,9 +83,23 @@ class RoomRegistryTests(unittest.TestCase):
         private[2][9] = "secret"
         with self.assertRaises(ValueError):
             registry.register("user", "192.0.2.2", private)
-        registry.register("user", "192.0.2.2", registration())
+        room = registry.register("user", "192.0.2.2", registration())
+        registry.activate(room.room_id, room.owner, room.peer_ip)
         with self.assertRaises(ValueError):
             registry.register("user", "192.0.2.2", registration())
+
+    def test_registration_with_new_settings_replaces_unfinished_room(self):
+        registry = RoomRegistry()
+        room = registry.register("user", "192.0.2.2", registration())
+        updated = registration()
+        updated[2][7] = b"2?18?20?10?N?8:7777"
+
+        replacement = registry.register(room.owner, room.peer_ip, updated)
+
+        self.assertNotEqual(replacement.room_id, room.room_id)
+        self.assertIsNone(registry.activate(room.room_id, room.owner, room.peer_ip))
+        self.assertIs(registry.activate(replacement.room_id, room.owner, room.peer_ip), replacement)
+        self.assertEqual(replacement.info, updated[2][7])
 
     def test_pending_room_survives_launcher_close_but_eventually_expires(self):
         registry = RoomRegistry()

@@ -101,16 +101,26 @@ class RoomRegistry:
         self._remove_listeners.discard(listener)
 
     def register(self, owner: str, peer_ip: str, fields: list, profile: GameProfile = XIII) -> Room:
-        self.expire_pending()
+        now = time.monotonic()
+        self.expire_pending(now)
         profile.require_rooms()
         spec = profile.registration(fields, peer_ip)
         if spec.product != profile.product:
             raise ValueError("registration product does not match listener")
-        if any(room.owner == owner and room.peer_ip == peer_ip and room.product == profile.product
-               for room in self._rooms.values()):
-            raise ValueError("owner already has a registered room for this game")
-        room = Room(self._next_id, owner, peer_ip, **asdict(spec), profile=profile,
-                    pending_until=time.monotonic() + PENDING_ROOM_SECONDS)
+        settings = asdict(spec)
+        pending_until = now + PENDING_ROOM_SECONDS
+        existing = next((room for room in self._rooms.values()
+                         if (room.owner, room.peer_ip, room.product) == (owner, peer_ip, profile.product)), None)
+        if existing is not None:
+            if existing.active:
+                raise ValueError("owner already has a registered room for this game")
+            # A repeated launcher request can race the host's UDP login.
+            # Keep its room ID unless the host changed the registration settings.
+            if all(getattr(existing, key) == value for key, value in settings.items()):
+                existing.pending_until = pending_until
+                return existing
+            del self._rooms[existing.room_id]
+        room = Room(self._next_id, owner, peer_ip, **settings, profile=profile, pending_until=pending_until)
         self._next_id += 1
         self._rooms[room.room_id] = room
         return room
