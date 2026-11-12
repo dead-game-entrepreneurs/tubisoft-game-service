@@ -2,8 +2,8 @@
 name: Robin installation test
 
 on:
-  pull_request:
-    types: [opened]
+  push:
+    branches: [chore/add-robin-review]
 
 permissions:
   actions: read
@@ -14,8 +14,7 @@ jobs:
   review-existing-pr:
     if: >-
       github.actor == github.repository_owner &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'chore/add-robin-review'
+      github.ref_name == 'chore/add-robin-review'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -64,6 +63,7 @@ jobs:
                 'INPUT_MAX-COMMENTS': '10',
                 'INPUT_REQUEST-CHANGES': 'false',
                 'INPUT_FAIL-ON-HIGH': 'false'
+                ,'INPUT_REVIEW-ON-SYNCHRONIZE': 'false'
               }
             });
           if (result.error) throw result.error;
