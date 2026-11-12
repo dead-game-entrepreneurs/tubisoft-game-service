@@ -62,6 +62,14 @@ python tools/publication_audit.py
 
 The CI workflow runs tests, audits every tracked publication file, and builds the container. It does **not** deploy to a VPS automatically. The publication audit reports locations and categories without printing matched secrets; it is one review layer, not a universal secret detector.
 
+Robin provides optional AI review through GitHub Actions. Configure repository Actions secrets
+`LLM_API_KEY` (your provider key), `LLM_BASE_URL` (`https://openrouter.ai/api/v1`), and
+`LLM_MODEL` (`openai/gpt-6-luna` for GPT Luna). New non-draft PRs from this repository
+are reviewed automatically; a maintainer can comment `/robin` to review a fork PR or
+request another pass, or `/summary` for an overview. Reviews are advisory and do not
+replace CI or gameplay checks. The workflow pins Robin's implementation and reads PR
+files without checking out or executing PR code; pushes alone do not request another review.
+
 The [protocol implementation map](docs/xiii-network-protocol.md), [workflow analysis](docs/xiii-online-workflow.md), [crypto notes](docs/ubisoft-crypto-research.md), and [disc identity notes](docs/xiii-ps2-network.md) distinguish observed behavior from remaining hypotheses. Tools and Ghidra scripts are included; retail code, extracted scripts, captures, memory cards, and generated analysis are excluded. To analyze your own disc:
 
 ```sh
