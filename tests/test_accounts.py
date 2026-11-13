@@ -49,6 +49,52 @@ class AccountsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             accounts.backup_database(self.path, snapshot)
 
+    def test_country_is_the_only_stored_profile_field(self):
+        self.assertTrue(accounts.create_account(self.path, "ExampleOne", "fixture-one"))
+        self.assertEqual(accounts.country(self.path, "exampleone"), "")
+        self.assertTrue(accounts.set_country(self.path, "EXAMPLEONE", "CA"))
+        self.assertEqual(accounts.country(self.path, "ExampleOne"), "CA")
+        self.assertTrue(accounts.set_country(self.path, "exampleone", "US"))
+        self.assertEqual(accounts.country(self.path, "exampleone"), "US")
+        for bad in ("x" * 16, "tab\there", "caf\u00e9"):
+            self.assertFalse(accounts.set_country(self.path, "exampleone", bad))
+        self.assertFalse(accounts.set_country(self.path, "missing", "CA"))
+        self.assertTrue(accounts.set_country(self.path, "exampleone", ""))
+        self.assertEqual(accounts.country(self.path, "exampleone"), "")
+
+    def test_ignore_list(self):
+        for name in ("ExampleOne", "ExampleTwo"):
+            self.assertTrue(accounts.create_account(self.path, name, "fixture-one"))
+        self.assertEqual(accounts.ignored(self.path, "exampleone"), [])
+        self.assertEqual(accounts.add_ignored(self.path, "exampleone", "EXAMPLETWO"), "ExampleTwo")
+        self.assertEqual(accounts.add_ignored(self.path, "exampleone", "exampletwo"), "ExampleTwo")
+        for name in ("ExampleOne", "Missing", ""):
+            self.assertIsNone(accounts.add_ignored(self.path, "exampleone", name))
+        self.assertEqual(accounts.ignored(self.path, "ExampleOne"), ["ExampleTwo"])
+        self.assertEqual(accounts.ignoring(self.path, "exampleone", ["ExampleTwo", "Other"]), {"exampletwo"})
+        self.assertEqual(accounts.ignoring(self.path, "exampletwo", ["ExampleOne"]), set())
+        self.assertTrue(accounts.remove_ignored(self.path, "exampleone", "ExampleTwo"))
+        self.assertFalse(accounts.remove_ignored(self.path, "exampleone", "ExampleTwo"))
+        self.assertEqual(accounts.ignored(self.path, "exampleone"), [])
+
+    def test_search_lookup_and_friends_list(self):
+        for name in ("ExampleOne", "ExampleTwo", "Other_3"):
+            self.assertTrue(accounts.create_account(self.path, name, "fixture-one"))
+        self.assertEqual(accounts.search_accounts(self.path, "example"), ["ExampleOne", "ExampleTwo"])
+        self.assertEqual(accounts.search_accounts(self.path, "_"), ["Other_3"])
+        self.assertEqual(accounts.search_accounts(self.path, "%"), [])
+        self.assertEqual(accounts.find_account(self.path, "exampletwo"), "ExampleTwo")
+        self.assertIsNone(accounts.find_account(self.path, "absent"))
+        self.assertEqual(accounts.add_friend(self.path, "exampleone", "EXAMPLETWO", "group"), "ExampleTwo")
+        self.assertEqual(accounts.add_friend(self.path, "exampleone", "exampletwo", "other"), "ExampleTwo")
+        for friend, group in (("absent", ""), ("ExampleOne", ""), ("Other_3", "x" * 33)):
+            self.assertIsNone(accounts.add_friend(self.path, "ExampleOne", friend, group))
+        self.assertEqual(accounts.friends(self.path, "EXAMPLEONE"), [("ExampleTwo", "other")])
+        self.assertEqual(accounts.friends(self.path, "ExampleTwo"), [])
+        self.assertTrue(accounts.remove_friend(self.path, "ExampleOne", "exampletwo"))
+        self.assertFalse(accounts.remove_friend(self.path, "ExampleOne", "exampletwo"))
+        self.assertEqual(accounts.friends(self.path, "ExampleOne"), [])
+
     def test_concurrent_duplicate_creation_is_atomic(self):
         accounts.initialize_database(self.path)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:

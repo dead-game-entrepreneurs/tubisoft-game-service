@@ -15,7 +15,7 @@ import signal
 import subprocess
 from types import SimpleNamespace
 
-from . import accounts, bootstrap, router
+from . import accounts, bootstrap, hostalias, router
 from .ladder import LadderStore
 from . import results_api
 from .access import AccessPolicy, networks
@@ -82,6 +82,7 @@ def configuration(environment=None):
         nat_port=port("NAT_PORT", 30002), http_port=port("HTTP_PORT", 8080),
         nat_allowed_cidr=allowed, access_policy=AccessPolicy(allowed), timeout=300,
         state=Path(env.get("TUBISOFT_STATE_DIR", "/state")),
+        host_alias=hostalias.configure(env.get("TUBISOFT_HOST_ALIAS", "auto"), address),
         gr2_worker_state=Path(env['TUBISOFT_GR2_WORKER_STATE']) if env.get('TUBISOFT_GR2_WORKER_STATE') else None)
 
 

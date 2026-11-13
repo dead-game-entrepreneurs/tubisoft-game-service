@@ -102,7 +102,8 @@ class Handoffs:
         return grant.username
 
 
-def query_reply(profile: GameProfile, fields: list, username: str, *, ranking_store=None) -> list:
+def query_reply(profile: GameProfile, fields: list, username: str, *, ranking_store=None,
+                account_db=None) -> list:
     if len(fields) != 3 or unsigned(fields[0], 16) != 0x501:
         raise ValueError("unsupported proxy query")
     unsigned(fields[1])
@@ -111,6 +112,9 @@ def query_reply(profile: GameProfile, fields: list, username: str, *, ranking_st
     if ranking_store is not None and profile.slug=='gr2':
         from .games.gr2_ladder import ranking_table
         table=ranking_table(profile,fields[2],username,ranking_store)
+    elif account_db is not None and profile.match_ladder(account_db) is not None:
+        from .games.r6_ladder import ranking_table
+        table = ranking_table(profile, fields[2], username, account_db)
     else:table = profile.ranking_table(fields[2], username)
     # 0x004c6a70 reconstructs the SDK result and appends the transport
     # correlation ID. Do not put the application's separate ID in its place.

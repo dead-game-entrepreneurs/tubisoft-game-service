@@ -80,8 +80,12 @@ class Session:
 
 
 class Probe(asyncio.DatagramProtocol):
-    def __init__(self, pending_handoffs: dict[tuple[str, str], float], registry: rooms.RoomRegistry, profile: GameProfile = XIII):
+    def __init__(self, pending_handoffs: dict[tuple[str, str], float], registry: rooms.RoomRegistry,
+                 profile: GameProfile = XIII, host_alias=None):
         self.pending_handoffs = pending_handoffs
+        # TCP handoffs and rooms use the aliased address; UDP replies still
+        # go to the datagram's real source.
+        self.host_alias = host_alias
         self.registry = registry
         self.profile = profile
         self.transport: asyncio.DatagramTransport | None = None
@@ -205,7 +209,8 @@ class Probe(asyncio.DatagramProtocol):
 
     def datagram_received(self, packet: bytes, peer: tuple[str, int]) -> None:
         session = self.sessions.get(peer)
-        if session is None and not any(ip == peer[0] and expiry > time.monotonic()
+        source_ip = self.host_alias(peer[0]) if self.host_alias is not None else peer[0]
+        if session is None and not any(ip == source_ip and expiry > time.monotonic()
                                        for (ip, _), expiry in self.pending_handoffs.items()):
             return
         if not HEADER.size <= len(packet) <= 2048:
@@ -262,11 +267,11 @@ class Probe(asyncio.DatagramProtocol):
                             and all(isinstance(field, str) for field in fields)
                             and fields[1].isascii() and fields[1].isdecimal()):
                         owner = fields[0].casefold()
-                        key = (peer[0], owner)
+                        key = (source_ip, owner)
                         if self.pending_handoffs.get(key, 0) <= time.monotonic():
                             LOG.info("UDP host login rejected peer=%s: no pending handoff", peer)
                             return
-                        room = self.registry.activate(int(fields[1]), owner, peer[0], self.profile.product)
+                        room = self.registry.activate(int(fields[1]), owner, source_ip, self.profile.product)
                         if room is None:
                             LOG.info("UDP host login rejected peer=%s: room ownership mismatch", peer)
                             return

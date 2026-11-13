@@ -1,4 +1,5 @@
 import asyncio
+import socket
 import time
 import unittest
 from pathlib import Path
@@ -22,6 +23,7 @@ class Writer:
         self.peer = peer
         self.local_port = local_port
         self.output = bytearray()
+        self.transport = FakeTransport()
 
     def get_extra_info(self, name):
         return {"peername": (self.peer, 1234), "sockname": ("192.0.2.1", self.local_port)}.get(name)
@@ -531,3 +533,65 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, [["50", ["guest", "0", str(room.room_id), guest_ip, "", b"", "0"]],
                                   ["66", ["guest", player_info]], ["66", ["guest", updated_info]],
                                   ["51", ["guest"]]])
+
+
+class FakeTransport:
+    def __init__(self, queued=0):
+        self.queued, self.aborted, self.closing = queued, False, False
+
+    def get_write_buffer_size(self):
+        return self.queued
+
+    def is_closing(self):
+        return self.closing
+
+    def abort(self):
+        self.aborted = self.closing = True
+
+
+class NotificationBacklogTests(unittest.IsolatedAsyncioTestCase):
+    def test_a_recipient_over_the_bound_is_disconnected(self):
+        transport = FakeTransport()
+        written = []
+        writer = SimpleNamespace(transport=transport, write=written.append)
+        self.assertTrue(router.queue_notification(writer, b"x" * 100, "peer", "lobby"))
+        transport.queued = router.NOTIFICATION_BACKLOG_LIMIT - 100
+        self.assertTrue(router.queue_notification(writer, b"x" * 100, "peer", "lobby"))
+        transport.queued = router.NOTIFICATION_BACKLOG_LIMIT
+        self.assertFalse(router.queue_notification(writer, b"x", "peer", "lobby"))
+        self.assertTrue(transport.aborted)
+        # Nothing more is queued once the connection is closing.
+        self.assertFalse(router.queue_notification(writer, b"x", "peer", "lobby"))
+        self.assertEqual(len(written), 2)
+
+    async def test_a_stalled_loopback_reader_stays_bounded(self):
+        accepted = asyncio.get_running_loop().create_future()
+
+        async def handler(reader, writer):
+            accepted.set_result(writer)
+            await reader.read()
+
+        server = await asyncio.start_server(handler, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        sock = socket.socket()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        sock.setblocking(False)
+        await asyncio.get_running_loop().sock_connect(sock, ("127.0.0.1", port))
+        try:
+            writer = await asyncio.wait_for(accepted, 5)
+            writer.transport.get_extra_info("socket").setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+            frame = bytes(1024)
+            for count in range(router.NOTIFICATION_BACKLOG_LIMIT // len(frame) * 64):
+                # The client never reads; the sender keeps publishing.
+                if not router.queue_notification(writer, frame, "stalled", "lobby"):
+                    break
+                self.assertLessEqual(writer.transport.get_write_buffer_size(), router.NOTIFICATION_BACKLOG_LIMIT)
+                if count % 64 == 0:
+                    await asyncio.sleep(0)
+            else:
+                self.fail("a stalled reader was never disconnected")
+            self.assertTrue(writer.transport.is_closing())
+        finally:
+            sock.close()
+            server.close()
+            await server.wait_closed()

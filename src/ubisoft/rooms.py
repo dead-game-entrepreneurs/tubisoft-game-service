@@ -30,6 +30,9 @@ class Room:
     sdk_version: str
     local_ip: str = ""
     profile: GameProfile = field(default=XIII, repr=False)
+    # The owner's sign-in name exactly as the game sent it; `owner` is the
+    # case-folded identity used for authorization.
+    owner_name: str = ""
     active: bool = False
     pending_until: float = 0
     members: set[tuple[str, str]] = field(default_factory=set)
@@ -48,14 +51,44 @@ class Room:
         host = (self.peer_ip, self.owner)
         player_count = self.worker_players if self.dedicated else 1 + len(self.members - {host})
         return [self.group_type, self.name, str(self.room_id), "1", self.parent_id,
-                advertised_flags, "2", self.owner, "", self.product, self.info, "0",
+                advertised_flags, "2", self.owner_name or self.owner, "", self.product, self.info, "0",
                 self.max_players, str(player_count), self.max_spectators, "0",
                 self.game_version, self.sdk_version, self.peer_ip, self.local_ip or self.peer_ip]
+
+
+@dataclass
+class LobbyMember:
+    """A signed-in parent-lobby member, as announced to the other members."""
+    name: str
+    product: str
+    address: str
+    local_address: str
+    send: Callable[[list], None] = field(repr=False)
+    info: bytes = b""
+    group: str = "1"
+    announced: bool = False
 
 
 class RoomRegistry:
     def __init__(self) -> None:
         self._rooms: dict[int, Room] = {}
+        self._lobby: dict[object, LobbyMember] = {}
+        # Signed-in friends channels by case-folded name: (connection, send).
+        self.friend_channels: dict[str, tuple[object, Callable[[int, list], None]]] = {}
+        # Stored friends of each signed-in watcher, used for live presence
+        # updates: friend key -> (display name, group).
+        self.friend_lists: dict[str, dict[str, tuple[str, str]]] = {}
+        self._next_match = 1
+        # Operation 17 state (game mode) of recent matches by match ID.
+        self.match_modes: dict[str, str] = {}
+        # Latest results of unfinished matches: match ID -> (room ID, entries),
+        # and each room's current match ID. A room's entries are dropped when
+        # its match is recorded, replaced or the room is removed.
+        self.match_results: dict[str, tuple[int, list]] = {}
+        self.room_matches: dict[int, str] = {}
+        # Case-folded names of the players who were in a match's room at any
+        # point since its operation 17; only they can be rated for it.
+        self.match_players: dict[str, set[str]] = {}
         self._next_id = 1000
         self._remove_listeners: set[Callable[[Room], None]] = set()
         self.worker_provider = None
@@ -120,7 +153,8 @@ class RoomRegistry:
                 existing.pending_until = pending_until
                 return existing
             del self._rooms[existing.room_id]
-        room = Room(self._next_id, owner, peer_ip, **settings, profile=profile, pending_until=pending_until)
+        room_id = -self._next_id if profile.negative_room_ids else self._next_id
+        room = Room(room_id, owner, peer_ip, **settings, profile=profile, pending_until=pending_until)
         self._next_id += 1
         self._rooms[room.room_id] = room
         return room
@@ -163,6 +197,7 @@ class RoomRegistry:
             del self._rooms[room_id]
             room.active = False
             room.host_connections.clear()
+            self.forget_match(room_id)
             for listener in tuple(self._remove_listeners):
                 listener(room)
 
@@ -170,6 +205,37 @@ class RoomRegistry:
         self.sync_worker()
         room = self._rooms.get(room_id)
         return room if room is not None and room.active and (product is None or room.product == product) else None
+
+    def forget_match(self, room_id: int) -> str | None:
+        """Drop a room's current match and its unrecorded state."""
+        match_id = self.room_matches.pop(room_id, None)
+        if match_id is not None:
+            self.match_results.pop(match_id, None)
+            self.match_modes.pop(match_id, None)
+            self.match_players.pop(match_id, None)
+        return match_id
+
+    def next_match_id(self, mode: str | None = None) -> int:
+        match_id = self._next_match
+        self._next_match += 1
+        if mode is not None:
+            self.match_modes[str(match_id)] = mode
+            while len(self.match_modes) > 1024:
+                del self.match_modes[next(iter(self.match_modes))]
+        return match_id
+
+    def lobby_join(self, connection: object, member: LobbyMember) -> LobbyMember:
+        return self._lobby.setdefault(connection, member)
+
+    def lobby_member(self, connection: object) -> LobbyMember | None:
+        return self._lobby.get(connection)
+
+    def lobby_leave(self, connection: object) -> LobbyMember | None:
+        return self._lobby.pop(connection, None)
+
+    def lobby_members(self, product: str, exclude: object = None) -> list[LobbyMember]:
+        return [member for connection, member in self._lobby.items()
+                if connection is not exclude and member.product == product]
 
     def children(self, product: str = XIII.product) -> list:
         self.sync_worker()

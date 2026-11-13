@@ -1,0 +1,20 @@
+# Experimental Rainbow Six 3 bootstrap/shared-auth research alongside working XIII.
+# docker compose -f compose.yaml -f deploy/compose.r6.yaml up -d --build
+# To run beside GR2 too, add both overlays and override TUBISOFT_GAMES with xiii,gr2,r6
+# in a later local overlay (the last file listed wins).
+services:
+  game-service:
+    environment:
+      TUBISOFT_GAMES: xiii,r6
+      TUBISOFT_R6_ROUTER_PORT: ${TUBISOFT_R6_ROUTER_PORT:-30020}
+      TUBISOFT_R6_LAUNCHER_PORT: ${TUBISOFT_R6_LAUNCHER_PORT:-30021}
+      TUBISOFT_R6_NAT_PORT: ${TUBISOFT_R6_NAT_PORT:-30022}
+      # "Latest News" items 1 and 2 (printable ASCII, up to 512 characters).
+      # Empty keeps the built-in text; a single space blanks an item.
+      TUBISOFT_R6_NEWS_1: ${TUBISOFT_R6_NEWS_1:-}
+      TUBISOFT_R6_NEWS_2: ${TUBISOFT_R6_NEWS_2:-}
+    ports:
+      - "${TUBISOFT_R6_ROUTER_PORT:-30020}:${TUBISOFT_R6_ROUTER_PORT:-30020}/tcp"
+      - "${TUBISOFT_R6_ROUTER_PORT:-30020}:${TUBISOFT_R6_ROUTER_PORT:-30020}/udp"
+      - "${TUBISOFT_R6_LAUNCHER_PORT:-30021}:${TUBISOFT_R6_LAUNCHER_PORT:-30021}/tcp"
+      - "${TUBISOFT_R6_NAT_PORT:-30022}:${TUBISOFT_R6_NAT_PORT:-30022}/udp"

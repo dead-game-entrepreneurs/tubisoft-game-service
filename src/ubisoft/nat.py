@@ -56,8 +56,10 @@ class Session:
 
 
 class Discovery(asyncio.DatagramProtocol):
-    def __init__(self, allowed_cidr: str = "127.0.0.0/8") -> None:
+    def __init__(self, allowed_cidr: str = "127.0.0.0/8", host_alias=None) -> None:
         self.allowed = networks(allowed_cidr)
+        # Replies still go to the real source; only the reported address changes.
+        self.host_alias = host_alias
         self.transport: asyncio.DatagramTransport | None = None
         self.sessions: dict[tuple[str, int], Session] = {}
         self.tokens: dict[bytes, Request] = {}
@@ -159,7 +161,8 @@ class Discovery(asyncio.DatagramProtocol):
         self.send(packet, peer)
         if request.address_reply is None:
             # The callback compares this native s_addr with inet_aton output.
-            address = int.from_bytes(ipaddress.IPv4Address(peer[0]).packed, "little")
+            observed = self.host_alias(peer[0]) if self.host_alias is not None else peer[0]
+            address = int.from_bytes(ipaddress.IPv4Address(observed).packed, "little")
             sequence, reply = self.reply(session, request, "3", address, peer[1])
             request.address_sequence = sequence
             request.address_reply = reply

@@ -81,11 +81,11 @@ class GR2Profile(GameProfile):
     def login_notices(self, fields: list) -> list:
         # 0x004caab0 sends one language string; 0x004cbe40 requires a
         # nested pair of strings (each at most 512 bytes plus NUL).
-        # No service notices are currently configured.
+        # No service notices are configured by default.
         if (len(fields) != 1 or not isinstance(fields[0], str)
                 or fields[0] not in ("en", "de", "fr", "es", "it")):
             raise ValueError("unsupported GR2 notice language")
-        return ["", ""]
+        return list(self.news)
 
     def discovery_login(self, fields: list) -> None:
         self.require_discovery()
