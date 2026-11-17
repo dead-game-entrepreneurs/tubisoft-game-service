@@ -59,6 +59,12 @@ class GameProfile:
     # (operation 50 with its own name). Brothers in Arms completes the join
     # only on that event; R6 completes it on the operation-23 reply.
     self_member_event: bool = False
+    # 187's peer callbacks look up the client's own room membership before
+    # processing other players. Send self join/leave events for that title.
+    self_room_member_event: bool = False
+    # R6/BiA seed the joiner with room members. 187's join callback opens
+    # peers from its existing parent directory; repeating joins adds peers twice.
+    room_join_resends_members: bool = True
     # Whether a group refresh (operation 9) re-sends the known members. R6
     # needs this after leaving a room. Titles with finer rules override
     # group_refresh (Brothers in Arms).
@@ -75,6 +81,8 @@ class GameProfile:
     negative_room_ids: bool = False
     # Whether operation 106 (join a friend's lobby or game) is answered.
     friend_joining: bool = False
+    # Product-wide room catalog on the wait connection (187 operation 109).
+    product_room_catalog: bool = False
     # Whether joining guests receive GAME_STARTED (operation 56).
     game_started: bool = True
     # The two login notices ("Latest News"); TUBISOFT_<SLUG>_NEWS_1/_2
@@ -108,6 +116,24 @@ class GameProfile:
 
     def parent_player_info(self, fields: list) -> bytes:
         raise UnsupportedOperation(f"{self.slug} parent player data is not implemented")
+
+    def room_player_info(self, fields: list) -> bytes:
+        # Preserve the shared room path's existing bounds. Titles whose
+        # callbacks copy a fixed-size record must validate that size here.
+        if len(fields) != 1 or not isinstance(fields[0], bytes) or len(fields[0]) > 16384:
+            raise ValueError("invalid room player data")
+        return fields[0]
+
+    def player_endpoint(self, info: bytes, peer_ip: str) -> str:
+        from ..router import endpoint_shape
+        return endpoint_shape(info, peer_ip, self.nat_address_byteorder)
+
+    def room_catalog(self, fields: list) -> None:
+        raise UnsupportedOperation(f"{self.slug} product room catalog is not implemented")
+
+    def account_failure(self, message_type: int, reason: str) -> list | None:
+        # Return a title-verified GSFAIL body, or keep the legacy close.
+        return None
 
     def login_notices(self, fields: list) -> list:
         raise UnsupportedOperation(f"{self.slug} login notices are not implemented")
@@ -198,6 +224,11 @@ class GameProfile:
 
     def lobby_member_event(self, member) -> list:
         raise UnsupportedOperation(f"{self.slug} lobby member notifications are not implemented")
+
+    def lobby_player_update(self, member) -> list:
+        # Existing titles re-announce the member. 187 has a distinct
+        # operation-66 reader that updates data without adding a peer again.
+        return self.lobby_member_event(member)
 
     def lobby_member_left(self, member) -> list:
         raise UnsupportedOperation(f"{self.slug} lobby member leave is not implemented")

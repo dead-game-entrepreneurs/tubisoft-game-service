@@ -42,6 +42,9 @@ class Request:
     acknowledged: bool = False
     address_retry_at: float = 0
     address_retries: int = 0
+    username: str = ""
+    product: str = ""
+    sdk: str = ""
 
 
 @dataclass
@@ -57,10 +60,11 @@ class Session:
 
 class Discovery(asyncio.DatagramProtocol):
     def __init__(self, allowed_cidr: str = "127.0.0.0/8", host_alias=None,
-                 address_byteorder: str = "little") -> None:
+                 address_byteorder: str = "little", endpoint_mapper=None) -> None:
         if address_byteorder not in ("little", "big"):
             raise ValueError("address byte order must be little or big")
         self.address_byteorder = address_byteorder
+        self.endpoint_mapper = endpoint_mapper
         self.allowed = networks(allowed_cidr)
         # Replies still go to the real source; only the reported address changes.
         self.host_alias = host_alias
@@ -167,8 +171,14 @@ class Discovery(asyncio.DatagramProtocol):
             # XIII's callback compares the native s_addr ("little") with
             # inet_aton output; Brothers in Arms reads a host-order word.
             observed = self.host_alias(peer[0]) if self.host_alias is not None else peer[0]
+            mapped_port = peer[1]
+            if self.endpoint_mapper is not None:
+                mapped = self.endpoint_mapper(request, peer)
+                if mapped is None:
+                    return
+                observed, mapped_port = mapped
             address = int.from_bytes(ipaddress.IPv4Address(observed).packed, self.address_byteorder)
-            sequence, reply = self.reply(session, request, "3", address, peer[1])
+            sequence, reply = self.reply(session, request, "3", address, mapped_port)
             request.address_sequence = sequence
             request.address_reply = reply
             request.address_retry_at = time.monotonic() + RETRY_SECONDS
@@ -256,6 +266,7 @@ class Discovery(asyncio.DatagramProtocol):
         while token in self.tokens:
             token = secrets.token_bytes(4)
         request = Request(peer, request_id, token, segment, header)
+        request.username, request.product, request.sdk = fields[1][1:]
         session.requests[request_id] = request
         self.tokens[token] = request
         # 0x01d8ef90 converts this value to network bytes and asks the game

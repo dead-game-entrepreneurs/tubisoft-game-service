@@ -138,7 +138,7 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                  access_policy: AccessPolicy | None = None,
                  game_profile: GameProfile = XIII,
                  proxy_handoffs: proxy.Handoffs | None = None,
-                 ranking_store=None, host_alias=None) -> None:
+                 ranking_store=None, host_alias=None, relay=None) -> None:
     peer = writer.get_extra_info("peername")
     if host_alias is not None:
         # Room and handoff addresses must be reachable by other players.
@@ -232,16 +232,19 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
         return game_profile.parent_lobby(players)
 
     def lobby_send(event: list) -> None:
+        if relay is not None and wait_user is not None:
+            event = relay.member_event(event, wait_user)
         payload = gsxor.encrypt(data.encode(event))
         queue_notification(writer, GSHeader(HEADER_SIZE + len(payload), 0, 1, 0xd1, 2, 4).encode() + payload,
                            peer, "lobby")
 
-    def lobby_publish() -> None:
+    def lobby_publish(*, player_update: bool = False) -> None:
         # Announce this member's current record to the other parent members.
         member = registry.lobby_member(host_connection)
         if member is None or not member.announced:
             return
-        event = game_profile.lobby_member_event(member)
+        event = (game_profile.lobby_player_update(member) if player_update
+                 else game_profile.lobby_member_event(member))
         others = registry.lobby_members(game_profile.product, exclude=host_connection)
         for other in others:
             other.send(event)
@@ -253,14 +256,21 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
         member = registry.lobby_member(host_connection)
         if member is None or member.group == group:
             return
+        if relay is not None:
+            relay.membership_changed(member)
         if member.announced and member.group != "1":
             # Leaving a room: 0x00403220 decrements the room's player count
             # and drops the member from the others' room member lists.
             event = game_profile.lobby_member_left(member)
             for other in registry.lobby_members(game_profile.product, exclude=host_connection):
                 other.send(event)
+            if game_profile.self_room_member_event and group == "1":
+                # 187 clears its own negative group ID on operation 51.
+                lobby_send(event)
         member.group = group
         lobby_publish()
+        if game_profile.self_room_member_event and group == "1" and member.announced:
+            lobby_send(game_profile.lobby_member_event(member))
 
     def lobby_depart() -> None:
         member = registry.lobby_leave(host_connection)
@@ -385,7 +395,15 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                         await writer.drain()
                         LOG.info("account stored peer=%s; experimental success response sent", peer)
                     else:
-                        LOG.info("account already exists peer=%s; duplicate response not implemented", peer)
+                        failure = game_profile.account_failure(1, "duplicate")
+                        if failure is not None:
+                            payload = gsxor.encrypt(data.encode(failure))
+                            writer.write(response_header(header, payload, 0x27) + payload)
+                            await writer.drain()
+                            LOG.info("account creation rejected game=%s peer=%s reason=duplicate; failure response sent",
+                                     game_profile.slug, peer)
+                        else:
+                            LOG.info("account already exists peer=%s; duplicate response not implemented", peer)
                 elif (header.message_type == 0x66 and len(fields) == 4
                       and all(isinstance(field, str) for field in fields[:3])
                       and isinstance(fields[3], bytes)):
@@ -400,7 +418,17 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                         logged_in_user = fields[0].casefold()
                         authenticated[(peer[0], logged_in_user)] = time.monotonic() + 120
                         continue
-                    LOG.info("local login rejected peer=%s; failure response not implemented", peer)
+                    exists = await account_operation(accounts.find_account, account_db, fields[0])
+                    reason = "password" if exists is not None else "unknown-account"
+                    failure = game_profile.account_failure(0x66, reason)
+                    if failure is not None:
+                        payload = gsxor.encrypt(data.encode(failure))
+                        writer.write(response_header(header, payload, 0x27) + payload)
+                        await writer.drain()
+                        LOG.info("local login rejected game=%s peer=%s reason=%s; failure response sent",
+                                 game_profile.slug, peer, reason)
+                    else:
+                        LOG.info("local login rejected peer=%s; failure response not implemented", peer)
                 elif (header.message_type == 0x66 and len(fields) == 3
                       and all(isinstance(field, str) for field in fields)
                       and local[1] != wait_port):
@@ -912,6 +940,19 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                                 await writer.drain()
                                 LOG.info("discovery login response and experimental parent lobby sent peer=%s", peer)
                                 continue
+                            if subtype == 109 and game_profile.product_room_catalog:
+                                game_profile.room_catalog(fields[1])
+                                # 187 clears its folder list before requesting
+                                # this catalog. Re-add the parent before its
+                                # games through the operation-53 child reader;
+                                # there is no operation-109 completion reader.
+                                records = [parent_record(), *registry.children(game_profile.product)]
+                                payload = gsxor.encrypt(data.encode(["53", ["1", "256", ["0"], records]]))
+                                writer.write(response_header(header, payload, 0xd1) + payload)
+                                await writer.drain()
+                                LOG.info("product room catalog sent game=%s peer=%s rooms=%d",
+                                         game_profile.slug, peer, len(records) - 1)
+                                continue
                             if (subtype == 3 and len(fields[1]) >= 1
                                     and isinstance(fields[1][0], str) and fields[1][0] == "1"):
                                 pending_handoffs[(peer[0], wait_user.casefold())] = time.monotonic() + 120
@@ -1002,20 +1043,23 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                                 continue
                             if subtype == 42 and joined_parent and joined_room is None:
                                 parent_info = game_profile.parent_player_info(fields[1])
+                                member = registry.lobby_member(host_connection) if game_profile.lobby_members else None
+                                if relay is not None and member is not None:
+                                    parent_info = relay.confirm(member, parent_info)
                                 # 0x004db070 delegates to the common lobby
                                 # success parser; no game endpoint belongs
                                 # in this directory-level completion.
                                 payload = gsxor.encrypt(data.encode(["38", ["42"]]))
                                 writer.write(response_header(header, payload, 0xd1) + payload)
-                                member = registry.lobby_member(host_connection) if game_profile.lobby_members else None
                                 if member is not None:
+                                    was_announced = member.announced
                                     member.info = parent_info
                                     member.announced = True
-                                    lobby_publish()
+                                    lobby_publish(player_update=was_announced)
                                 await writer.drain()
                                 LOG.info("parent player data updated game=%s peer=%s bytes=%d endpoint=%s",
                                          game_profile.slug, peer, len(parent_info),
-                                         endpoint_shape(parent_info, peer[0], game_profile.nat_address_byteorder))
+                                         game_profile.player_endpoint(parent_info, peer[0]))
                                 continue
                             if subtype == 12 and game_profile.lobby_create:
                                 # Lobby-server room creation. The creating
@@ -1026,6 +1070,8 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                                 owner = wait_user.casefold()
                                 created = registry.register(owner, peer[0], fields[1], game_profile)
                                 created.owner_name = wait_user
+                                if relay is not None:
+                                    relay.room(created)
                                 registry.activate(created.room_id, owner, peer[0], game_profile.product)
                                 registry.bind_host(created, owner, peer[0], host_connection)
                                 host_room = created
@@ -1127,6 +1173,8 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                             if (game_profile.lobby_create and host_room is not None
                                     and subtype in (15, 17, 30, 31, 33)):
                                 reply = game_profile.room_update(host_room, subtype, fields[1])
+                                if relay is not None:
+                                    relay.room(host_room)
                                 payload = gsxor.encrypt(data.encode(["38", [str(subtype), reply]]))
                                 writer.write(response_header(header, payload, 0xd1) + payload)
                                 LOG.info("room update accepted game=%s peer=%s room=%d subtype=%d game_port=%s",
@@ -1224,18 +1272,34 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                                 # Populate the room record; this is separate
                                 # from the GAME_STARTED join-completion event.
                                 payload = gsxor.encrypt(data.encode(["53", [str(room.room_id), "64", room.group_fields()]]))
-                                writer.write(response_header(header, payload, 0xd1) + payload)
+                                room_frame = response_header(header, payload, 0xd1) + payload
+                                self_member_first = game_profile.lobby_members and game_profile.self_room_member_event
+                                if not self_member_first:
+                                    writer.write(room_frame)
                                 if game_profile.lobby_members:
                                     lobby_set_group(str(room.room_id))
+                                    if game_profile.self_room_member_event:
+                                        member = registry.lobby_member(host_connection)
+                                        if member is not None:
+                                            # 187 must file itself first: its
+                                            # peer callback checks self group
+                                            # membership before opening peers.
+                                            lobby_send(game_profile.lobby_member_event(member))
+                                        # Its member callback increments the
+                                        # room count. The following room info
+                                        # then sets the authoritative count.
+                                        writer.write(room_frame)
                                     # The joiner files these in its room
                                     # member list (0x00403070 -> 0x00401810).
                                     present = [member for member in registry.lobby_members(
                                         game_profile.product, exclude=host_connection)
                                         if member.announced and member.group == str(room.room_id)]
-                                    for member in present:
-                                        lobby_send(game_profile.lobby_member_event(member))
+                                    if game_profile.room_join_resends_members:
+                                        for member in present:
+                                            lobby_send(game_profile.lobby_member_event(member))
                                     LOG.info("room members sent game=%s peer=%s room=%d members=%d",
-                                             game_profile.slug, peer, room.room_id, len(present))
+                                             game_profile.slug, peer, room.room_id,
+                                             len(present) if game_profile.room_join_resends_members else 0)
                                 await writer.drain()
                                 LOG.info("experimental room join accepted peer=%s room=%d", peer, room.room_id)
                                 continue
@@ -1286,25 +1350,28 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                                 continue
                             if (subtype == 42 and joined_room is not None and len(fields[1]) == 1
                                     and isinstance(fields[1][0], bytes) and len(fields[1][0]) <= 16384):
+                                player_info = game_profile.room_player_info(fields[1])
                                 if registry.active_room(joined_room.room_id) is not joined_room:
                                     LOG.info("player info rejected peer=%s: host room unavailable", peer)
                                     break
-                                joined_room.member_info[(peer[0], wait_user.casefold())] = fields[1][0]
                                 is_owner = (peer[0], wait_user.casefold()) == (joined_room.peer_ip, joined_room.owner)
                                 member = registry.lobby_member(host_connection) if game_profile.lobby_members else None
                                 if member is not None:
+                                    if relay is not None:
+                                        player_info = relay.confirm(member, player_info)
                                     # Published again by the join callback
                                     # 0x00404300 (via 0x004013a0).
-                                    if member.info != fields[1][0]:
-                                        member.info = fields[1][0]
-                                        lobby_publish()
+                                    if member.info != player_info:
+                                        member.info = player_info
+                                        lobby_publish(player_update=True)
                                 elif host_probe is not None and not is_owner and not joined_room.dedicated:
-                                    guest_port = joined_room.profile.player_port(fields[1][0])
+                                    guest_port = joined_room.profile.player_port(player_info)
                                     notified = host_probe.member_info(joined_room, wait_user, peer[0],
                                                                       fields[1][0], new=not host_member_notified)
                                     host_member_notified |= notified
                                     LOG.info("member endpoint peer=%s game_port=%d host_notified=%s",
                                              peer, guest_port, notified)
+                                joined_room.member_info[(peer[0], wait_user.casefold())] = player_info
                                 payload = gsxor.encrypt(data.encode(["38", ["42"]]))
                                 writer.write(response_header(header, payload, 0xd1) + payload)
                                 # The room-join success only starts player-info
@@ -1409,6 +1476,10 @@ async def serve(args: argparse.Namespace) -> None:
                                  host_alias=getattr(args, "host_alias", None))
     advertise_ip = getattr(args, "advertise_ip", None) or args.bind
     access_policy = getattr(args, "access_policy", None)
+    relay = None
+    if game_profile.slug == "rod" and getattr(args, "rod_relay_config", None) is not None:
+        from .rod_relay import Relay
+        relay = Relay(args.rod_relay_config, registry, getattr(args, "host_alias", None))
     async def callback(reader, writer):
         peer_ip = writer.get_extra_info("peername")[0]
         if access_policy is not None and not access_policy.acquire(peer_ip):
@@ -1419,7 +1490,7 @@ async def serve(args: argparse.Namespace) -> None:
             await handle(reader, writer, key, args.timeout, args.account_db, advertise_ip, args.port,
                          pending_handoffs, authenticated, registry, host_probe, access_policy, game_profile,
                          proxy_handoffs,ranking_store=getattr(args,'ladder_store',None)if getattr(args,'native_rankings',False)else None,
-                         host_alias=getattr(args, "host_alias", None))
+                         host_alias=getattr(args, "host_alias", None), relay=relay)
         finally:
             if access_policy is not None:
                 access_policy.release(peer_ip)
@@ -1429,6 +1500,8 @@ async def serve(args: argparse.Namespace) -> None:
     nat_transport = None
     worker_task = None
     try:
+        if relay is not None:
+            await relay.start()
         if worker_path is not None:
             async def watch_worker():
                 while True:
@@ -1440,7 +1513,8 @@ async def serve(args: argparse.Namespace) -> None:
         if args.nat_port:
             nat_transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
                 lambda: nat.Discovery(args.nat_allowed_cidr, host_alias=getattr(args, "host_alias", None),
-                                      address_byteorder=game_profile.nat_address_byteorder),
+                                      address_byteorder=game_profile.nat_address_byteorder,
+                                      endpoint_mapper=relay.observe if relay is not None else None),
                 local_addr=(args.bind, args.nat_port))
         if args.launcher_port:
             launcher = await asyncio.start_server(callback, args.bind, args.launcher_port)
@@ -1448,6 +1522,8 @@ async def serve(args: argparse.Namespace) -> None:
         LOG.info("router handshake listening at %s", server.sockets[0].getsockname())
         await server.serve_forever()
     finally:
+        if relay is not None:
+            relay.close()
         if worker_task is not None:
             worker_task.cancel()
             await asyncio.gather(worker_task, return_exceptions=True)

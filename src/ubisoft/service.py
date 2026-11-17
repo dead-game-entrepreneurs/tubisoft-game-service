@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from . import accounts, bootstrap, hostalias, router
 from .ladder import LadderStore
 from . import results_api
+from . import rod_relay
 from .access import AccessPolicy, networks
 from .games.registry import bindings
 
@@ -72,8 +73,11 @@ def configuration(environment=None):
     results_keyring=env.get('TUBISOFT_RESULTS_KEYRING')
     if bool(results_keyring)!=bool(env.get('TUBISOFT_RESULTS_PORT')):
         raise ValueError('Configure results port and private worker keyring together')
+    game_bindings = bindings(env)
+    relay_config = rod_relay.configuration(env, address, game_bindings,
+                                          [port("HTTP_PORT", 8080), port("RESULTS_PORT", 8081)])
     return SimpleNamespace(
-        games=bindings(env),
+        games=game_bindings, rod_relay_config=relay_config,
         native_rankings=env.get('TUBISOFT_NATIVE_RANKINGS','0')=='1',
         results_keyring=Path(results_keyring)if results_keyring else None,
         results_port=port('RESULTS_PORT',8081),

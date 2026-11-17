@@ -34,6 +34,7 @@ class Room:
     # The owner's sign-in name exactly as the game sent it; `owner` is the
     # case-folded identity used for authorization.
     owner_name: str = ""
+    public_address: str = ""  # Optional relay advertisement; ownership keeps peer_ip.
     active: bool = False
     pending_until: float = 0
     members: set[tuple[str, str]] = field(default_factory=set)
@@ -54,7 +55,7 @@ class Room:
         return [self.group_type, self.name, str(self.room_id), "1", self.parent_id,
                 advertised_flags, "2", self.owner_name or self.owner, "", self.product, self.info, "0",
                 self.max_players, str(player_count), self.max_spectators, "0",
-                self.game_version, self.sdk_version, self.peer_ip, self.local_ip or self.peer_ip]
+                self.game_version, self.sdk_version, self.public_address or self.peer_ip, self.local_ip or self.peer_ip]
 
 
 @dataclass

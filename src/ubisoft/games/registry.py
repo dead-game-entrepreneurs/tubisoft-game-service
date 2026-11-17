@@ -6,9 +6,10 @@ from .base import GameProfile
 from .bia import PROFILE as BIA
 from .gr2 import PROFILE as GR2
 from .r6 import PROFILE as R6
+from .rod import PROFILE as ROD
 from .xiii import PROFILE as XIII
 
-PROFILES = MappingProxyType({profile.slug: profile for profile in (XIII, GR2, R6, BIA)})
+PROFILES = MappingProxyType({profile.slug: profile for profile in (XIII, GR2, R6, BIA, ROD)})
 
 
 @dataclass(frozen=True)

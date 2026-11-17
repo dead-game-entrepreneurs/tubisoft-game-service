@@ -14,6 +14,8 @@ Brothers in Arms: Road to Hill 30 (`bia`, `BROTHERSINARMSPS2US`) is a third opt-
 
 The independent Python gameplay worker, private data preparation tools and historical emulator research live in [gr2-ps2-dedicated-server](https://github.com/princebyyourlogic/gr2-ps2-dedicated-server). Tubisoft contains only shared services and the validated worker-directory interface. See [GR2 workers](docs/gr2-workers.md) and [GR2 protocol research](docs/ghost-recon-2-network.md).
 
+187 Ride or Die USA (`rod`, `RODPS2US`) has an opt-in experimental adapter for shared accounts, News, lobby/catalog discovery, protected rooms, membership, player/settings updates and match transitions. Retail clients have created accounts, signed in, hosted rooms and joined over both direct UDP and the optional forced relay. The relay targets two-player rooms; race gameplay, repeated joins and larger relay rooms remain unverified. Direct mode is the default, and relay mode is explicitly configured without adaptive switching. See the [deployment overlays, protocol notes and validation limits](docs/187-ride-or-die-network.md).
+
 ## Run a beta instance
 
 Requires Docker with Compose. The image is self-contained; no TSFP checkout, disc image, or existing lab image is needed.
@@ -79,6 +81,7 @@ The [protocol implementation map](docs/xiii-network-protocol.md), [workflow anal
 ```sh
 python tools/extract_disc.py '/path/to/discs/XIII (USA).iso'
 python tools/extract_gr2.py '/path/to/discs/Ghost Recon 2 (USA).iso'
+python tools/extract_187.py '/path/to/discs/187 - Ride or Die (USA) (En,Fr,Es).iso'
 ```
 
 For missing platform-auth responses, the [DNAS preservation workbench](docs/dnas-preservation.md) recovers protected GR2 library code and provides private input extraction, replay inventory, transport and comparison tools. It does not yet derive an accepted GR2 response or change the running DNAS service.
