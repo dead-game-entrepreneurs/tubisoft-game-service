@@ -103,8 +103,10 @@ enough. The ports answer only when `r6` is enabled. Brothers in Arms works
 the same way with `bia` and ports 30030-30032 (`TUBISOFT_BIA_*` overrides);
 see [its notes](brothers-in-arms-network.md).
 
-187 Ride or Die uses `TUBISOFT_GAMES=xiii,rod`, `TUBISOFT_ROD_*_PORT` overrides
-and the opt-in `deploy/compose.rod.yaml` overlay. Its enabled room adapter uses
+187 Ride or Die works the same way with `TUBISOFT_GAMES=xiii,rod`, ports
+30040-30042 and `TUBISOFT_ROD_*_PORT` overrides in `compose.yaml`. The optional
+`deploy/compose.rod-relay.yaml` overlay adds the two-player forced relay.
+Its enabled room adapter uses
 the shared GS/NAT services with title-specific player/session records and member
 ordering; see [the contracts and retail test procedure](187-ride-or-die-network.md).
 

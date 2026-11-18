@@ -1,4 +1,4 @@
-# Forced two-player 187 UDP relay. Include compose.rod.yaml before this overlay.
+# Forced two-player 187 UDP relay. Enable rod in TUBISOFT_GAMES.
 # Direct mode is the normal default; this does not implement adaptive fallback.
 services:
   game-service:

@@ -308,7 +308,7 @@ second per sender. Logs contain port/counter summaries, not payloads or names.
 
 ```sh
 TUBISOFT_GAMES=rod TUBISOFT_ROD_RELAY_MODE=relay docker compose \
-  -f compose.yaml -f deploy/compose.rod.yaml -f deploy/compose.rod-relay.yaml \
+  -f compose.yaml -f deploy/compose.rod-relay.yaml \
   up -d --build
 ```
 
@@ -367,14 +367,14 @@ address order. These checks establish server behavior, not a race simulation.
 For a local test, set the advertised address for your client and opt in:
 
 ```sh
-TUBISOFT_GAMES=xiii,rod docker compose -f compose.yaml -f deploy/compose.rod.yaml config --quiet
-TUBISOFT_GAMES=xiii,rod docker compose -f compose.yaml -f deploy/compose.rod.yaml up -d --build
+TUBISOFT_GAMES=xiii,rod docker compose config --quiet
+TUBISOFT_GAMES=xiii,rod docker compose up -d --build
 curl --noproxy '*' 'http://127.0.0.1:18080/gsinit.php?dp=RODPS2US'
 PYTHONPATH=src:tests python -m unittest test_rod_profile test_rod_rooms -v
 ```
 
 Use the existing platform DNS/DNAS service. Route `gsconnect.ubisoft.com` TCP 80
-to this instance's bootstrap, router TCP 30040, and NAT UDP 30042. The overlay
+to this instance's bootstrap, router TCP 30040, and NAT UDP 30042. `compose.yaml`
 also maps router UDP 30040 and launcher TCP 30041 for consistency; hosting uses
 lobby operation 12 rather than a launcher registration. DNS/DNAS are separate
 from this container; no second listener on shared ports 53 or 443 is needed.
