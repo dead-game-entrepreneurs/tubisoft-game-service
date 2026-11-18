@@ -58,15 +58,18 @@ def final_values(totals: dict[str, int]) -> list[int]:
 
 
 class BIALadder:
+    # Earned in Blood keeps the same versus totals in its own table.
+    TABLE = "bia_ladder"
+
     def __init__(self, path: Path):
         self.path = Path(path)
         initialize_database(self.path)
         with self._connection() as db:
             db.execute(
-                "CREATE TABLE IF NOT EXISTS bia_ladder (name_key TEXT PRIMARY KEY REFERENCES accounts(name_key), "
+                f"CREATE TABLE IF NOT EXISTS {self.TABLE} (name_key TEXT PRIMARY KEY REFERENCES accounts(name_key), "
                 + ", ".join(f"{name} INTEGER NOT NULL" for name in COUNTERS)
                 + ", matches INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
-            db.execute("CREATE INDEX IF NOT EXISTS bia_ladder_rank ON bia_ladder(score)")
+            db.execute(f"CREATE INDEX IF NOT EXISTS {self.TABLE}_rank ON {self.TABLE}(score)")
             db.commit()
 
     def _connection(self):
@@ -84,7 +87,10 @@ class BIALadder:
     def record(self, entries: list, mode: str | None) -> dict[str, list[int]]:
         """Add a finished match; returns each account's final values."""
         from .bia import summarize
-        players = summarize(entries)
+        return self.add_versus(summarize(entries))
+
+    def add_versus(self, players: list[tuple[str, list[int]]]) -> dict[str, list[int]]:
+        """Add validated versus results (eight values per player)."""
         now = int(time.time())
         result = {}
         with self._connection() as db:
@@ -95,12 +101,12 @@ class BIALadder:
                     if db.execute("SELECT 1 FROM accounts WHERE name_key = ?", (key,)).fetchone() is None:
                         continue
                     added = increments(values)
-                    db.execute("INSERT INTO bia_ladder VALUES (?, " + ", ".join("0" for _ in COUNTERS)
+                    db.execute(f"INSERT INTO {self.TABLE} VALUES (?, " + ", ".join("0" for _ in COUNTERS)
                                + ", 0, ?) ON CONFLICT(name_key) DO NOTHING", (key, now))
-                    db.execute("UPDATE bia_ladder SET " + ", ".join(f"{c} = {c} + ?" for c in COUNTERS)
+                    db.execute(f"UPDATE {self.TABLE} SET " + ", ".join(f"{c} = {c} + ?" for c in COUNTERS)
                                + ", matches = matches + 1, updated_at = ? WHERE name_key = ?",
                                (*(added[c] for c in COUNTERS), now, key))
-                    row = db.execute("SELECT " + ", ".join(COUNTERS) + " FROM bia_ladder WHERE name_key = ?",
+                    row = db.execute("SELECT " + ", ".join(COUNTERS) + f" FROM {self.TABLE} WHERE name_key = ?",
                                      (key,)).fetchone()
                     result[key] = final_values(dict(zip(COUNTERS, row)))
                 db.commit()
@@ -114,7 +120,7 @@ class BIALadder:
         with self._connection() as db:
             rows = db.execute(
                 "SELECT a.name, " + ", ".join("l." + c for c in COUNTERS)
-                + " FROM bia_ladder l JOIN accounts a ON a.name_key = l.name_key "
+                + f" FROM {self.TABLE} l JOIN accounts a ON a.name_key = l.name_key "
                 "ORDER BY l.score DESC, l.ranked_wins DESC, l.name_key ASC").fetchall()
         return [(rank, *row) for rank, row in enumerate(rows, 1)]
 

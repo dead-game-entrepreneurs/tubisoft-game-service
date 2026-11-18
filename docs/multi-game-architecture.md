@@ -80,6 +80,7 @@ Production defaults are unchanged:
 | `r6` | `RAINBOWSIX3PS2US` | 30020 | 30021 | 30022 | Experimental; two retail clients (PCSX2) hosted, joined and played rated matches; more than two players and dedicated-server stages untested |
 | `bia` | `BROTHERSINARMSPS2US` | 30030 | 30031 | 30032 | Experimental; two retail clients (PCSX2) created, joined and played Friendly and Ladder matches, including a next round; friend joining; stored ladder (Tubisoft's own SCORE) on the Stats screen |
 | `rod` | `RODPS2US` | 30040 | 30041 | 30042 | Experimental: retail registration/login, discovery, hosting and a two-PC room join after guest restart; race gameplay and retry/rejoin reliability pending |
+| `eib` | `BIAEIBPS2US` | 30050 | 30051 | 30052 | Experimental; two retail clients (PCSX2) played Adversarial and skirmish Ladder rounds, read the boards and joined a friend; chat (IRC) server for lobby invitations on TCP 30053 |
 
 For a local Python development instance, set `TUBISOFT_GAMES=xiii,gr2` plus the
 usual advertised address and state directory. XIII retains the existing
@@ -101,7 +102,9 @@ Rainbow Six 3 needs no overlay: `compose.yaml` already passes its settings
 and publishes ports 30020-30022, so `TUBISOFT_GAMES=xiii,r6` in `.env` is
 enough. The ports answer only when `r6` is enabled. Brothers in Arms works
 the same way with `bia` and ports 30030-30032 (`TUBISOFT_BIA_*` overrides);
-see [its notes](brothers-in-arms-network.md).
+see [its notes](brothers-in-arms-network.md). Earned in Blood uses `eib`,
+ports 30050-30052 and chat port 30053 (`TUBISOFT_EIB_*`); see
+[its notes](brothers-in-arms-earned-in-blood-network.md).
 
 187 Ride or Die works the same way with `TUBISOFT_GAMES=xiii,rod`, ports
 30040-30042 and `TUBISOFT_ROD_*_PORT` overrides in `compose.yaml`. The optional

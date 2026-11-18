@@ -54,6 +54,15 @@ def _hash(password: str, salt: bytes) -> bytes:
     return hashlib.scrypt(password.encode("utf-8"), salt=salt, n=16384, r=8, p=1, dklen=32)
 
 
+def creation_problem(username: str, password: str) -> str | None:
+    """The field create_account would refuse ("username" or "password"), or None."""
+    if not _valid(username, "x", creating=True):
+        return "username"
+    if not _valid("x", password, creating=True):
+        return "password"
+    return None
+
+
 def create_account(path: Path, username: str, password: str) -> bool:
     """Atomically create a case-insensitive name, retaining the display spelling."""
     if not _valid(username, password, creating=True):

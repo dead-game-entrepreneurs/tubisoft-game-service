@@ -204,8 +204,8 @@ class BIAProfileTests(unittest.TestCase):
         self.assertEqual(BIA.group_refresh(["1", "448"]), (True, True))
         self.assertEqual(R6.group_refresh(["1", "64"]), (True, True))
         self.assertEqual(XIII.group_refresh(["1"]), (True, XIII.refresh_resends_members))
-        in_lobby = SimpleNamespace(group="1")
-        in_room = SimpleNamespace(group="-1000")
+        in_lobby = LobbyMember("Fixture", BIA.product, "192.0.2.1", "", print)
+        in_room = LobbyMember("Fixture", BIA.product, "192.0.2.1", "", print, group="-1000")
         self.assertEqual(BIA.friend_location(in_lobby), [["1", "1"]])
         self.assertEqual(BIA.friend_location(in_room), [["1", "1"], ["1", "-1000"]])
         with self.assertRaises(UnsupportedOperation):

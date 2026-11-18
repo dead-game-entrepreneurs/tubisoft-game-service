@@ -48,21 +48,25 @@ def _decimal(value: str, maximum: int) -> int:
 RESULT_LIMITS = ((-1, 1), (0, 9_999), (0, 9_999), (0, 999_999), (0, 999_999), (0, 86_400), (0, 255), (0, 255))
 
 
-def summarize(entries: list) -> list[tuple[str, list[int]]]:
-    """Validate operation 30 entries; returns (name, eight values) per player."""
+def summarize(entries: list, limits: tuple = RESULT_LIMITS) -> list[tuple[str, list[int]]]:
+    """Validate operation 30 entries; returns (name, values) per player.
+
+    `limits` gives each value's bounds by field ID: the eight versus values
+    by default (Earned in Blood passes its eleven skirmish values).
+    """
     if not isinstance(entries, list) or len(entries) > 16:
         raise ValueError("BiA match results exceed local limit")
     players = []
     for entry in entries:
         if (not isinstance(entry, list) or len(entry) != 5 or not isinstance(entry[0], str)
                 or not 0 < len(entry[0].encode()) <= 32 or not isinstance(entry[4], list)
-                or len(entry[4]) != len(RESULT_LIMITS)):
+                or len(entry[4]) != len(limits)):
             raise ValueError("unsupported BiA match result entry")
         if not all(isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 10
                    for value in entry[1:4]):
             raise ValueError("invalid BiA match result header")
         values = []
-        for value, (low, high) in zip(entry[4], RESULT_LIMITS):
+        for value, (low, high) in zip(entry[4], limits):
             digits = value[1:] if isinstance(value, str) and value.startswith("-") else value
             if not isinstance(digits, str) or not digits.isascii() or not digits.isdecimal() or len(digits) > 10:
                 raise ValueError("invalid BiA match result value")
@@ -129,10 +133,10 @@ class BIAProfile(GameProfile):
         # ID (number), password (string) and a numeric option, as in R6.
         from ..proxy import unsigned
         if (len(fields) != 3 or not all(isinstance(value, str) for value in fields)
-                or fields[0] != "1" or fields[1] != ""):
+                or fields[0] not in self.lobby_ids() or fields[1] != ""):
             raise ValueError("unsupported BiA parent lobby join")
         unsigned(fields[2])
-        return ["1", ""]
+        return [fields[0], ""]
 
     def parent_player_info(self, fields: list) -> bytes:
         # 0x00528cb0 copies 12 bytes from the game's player record (+0x68c:
@@ -166,7 +170,7 @@ class BIAProfile(GameProfile):
                 or not all(isinstance(value, typ) for value, typ in zip(fields, types))):
             raise ValueError("unsupported BiA room creation structure")
         parent, name, product, group_type, players, spectators, info, password, first, second, extra = fields
-        if parent != "1" or product != self.product:
+        if parent not in self.lobby_ids() or product != self.product:
             raise ValueError("unsupported BiA room parent or product")
         if not name or not _text(name, 32) or not _text(password, 32):
             raise ValueError("invalid BiA room text field")
@@ -192,9 +196,16 @@ class BIAProfile(GameProfile):
 
     def lobby_create_result(self, room) -> list:
         # Reader 0x004fb380 (dispatcher 0x004ef620 -> 0x00502910): room ID,
-        # text and parent group ID. CreateRoomReply (0x0052a390) then waits
-        # for the room's record and sends operation 24 itself (0x0050b490).
-        return [str(room.room_id), "", room.parent_id]
+        # text and the lobby server ID. CreateRoomReply (0x0052a390) then
+        # waits for the room's record and sends operation 24 itself
+        # (0x0050b490) through that lobby server. Earned in Blood's
+        # CreateRoomReply (0x004fc780) passes the third value to
+        # LobbySend_JoinRoom (0x004c70c0), which picks the lobby server
+        # connection by it (0x004d7d70); with the parent group ID "2" there,
+        # the game asked for lobby server 2 (operation 3) and dropped its
+        # lobby connection (Earned in Blood retail run 3). Tubisoft has one
+        # lobby server, ID 1.
+        return [str(room.room_id), "", "1"]
 
     def room_join_result(self, room) -> list:
         # Reader 0x004fa540 (0x00502980): room ID and text on success.
@@ -364,8 +375,8 @@ class BIAProfile(GameProfile):
         # game needs both: 0x00520ff0 finds the listed room with that ID and
         # server and joins it (0x0051efa0). An empty list fails the request
         # with the game's own message.
-        locations = [["1", "1"]]
-        if member.group != "1":
+        locations = [["1", member.lobby]]
+        if member.in_room:
             locations.append(["1", member.group])
         return locations
 

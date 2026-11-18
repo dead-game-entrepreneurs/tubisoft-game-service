@@ -82,6 +82,13 @@ class LobbyMember:
     info: bytes = b""
     group: str = "1"
     announced: bool = False
+    # The parent lobby joined (operation 23). Every title but Earned in
+    # Blood has one, "1"; `group` is the lobby itself or a room in it.
+    lobby: str = "1"
+
+    @property
+    def in_room(self) -> bool:
+        return self.group != self.lobby
 
 
 class RoomRegistry:
@@ -93,6 +100,12 @@ class RoomRegistry:
         # Stored friends of each signed-in watcher, used for live presence
         # updates: friend key -> (display name, group).
         self.friend_lists: dict[str, dict[str, tuple[str, str]]] = {}
+        # Address each signed-in friends channel connected from, by
+        # case-folded name. The chat server admits only that address.
+        self.chat_hosts: dict[str, str] = {}
+        # Called with a case-folded name when its friends session ends; the
+        # chat server closes that player's chat connection.
+        self.chat_revokers: list[Callable[[str], None]] = []
         self._next_match = 1
         # Operation 17 state (game mode) of recent matches by match ID.
         self.match_modes: dict[str, str] = {}
@@ -109,6 +122,12 @@ class RoomRegistry:
         self.worker_provider = None
         self._worker_id = None
         self._syncing_worker = False
+
+    def end_chat(self, key: str) -> None:
+        """Forget a signed-out player's chat address and revoke their chat session."""
+        self.chat_hosts.pop(key, None)
+        for revoke in list(self.chat_revokers):
+            revoke(key)
 
     def sync_worker(self) -> None:
         """Reflect a local, healthy dedicated worker without a synthetic owner player."""
@@ -252,6 +271,8 @@ class RoomRegistry:
         return [member for connection, member in self._lobby.items()
                 if connection is not exclude and member.product == product]
 
-    def children(self, product: str = XIII.product) -> list:
+    def children(self, product: str = XIII.product, parent: str | None = None) -> list:
+        """Active rooms of a product, optionally only those in one parent lobby."""
         self.sync_worker()
-        return [room.group_fields() for room in self._rooms.values() if room.active and room.product == product]
+        return [room.group_fields() for room in self._rooms.values()
+                if room.active and room.product == product and (parent is None or room.parent_id == parent)]

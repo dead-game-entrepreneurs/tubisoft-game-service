@@ -112,14 +112,16 @@ async def serve(args) -> None:
         game_args = SimpleNamespace(**(vars(args) | {
             "game_profile": profile, "port": binding.router_port,
             "launcher_port": binding.launcher_port, "nat_port": binding.nat_port,
+            "chat_port": binding.chat_port,
             "worker_state": worker_state}))
         products[profile.product] = profile.bootstrap(
             args.advertise_ip, binding.router_port, binding.launcher_port,
-            args.advertise_ip, binding.nat_port)
+            args.advertise_ip, binding.nat_port, binding.chat_port)
         logging.getLogger("ubisoft.service").info(
             "enabling game=%s product=%s discovery=%s rooms=%s ports=%s", profile.slug,
             profile.product, profile.supports_discovery or profile.supports_rooms, profile.supports_rooms,
-            (binding.router_port, binding.launcher_port, binding.nat_port))
+            (binding.router_port, binding.launcher_port, binding.nat_port)
+            + ((binding.chat_port,) if binding.chat_port else ()))
         tasks.append(asyncio.create_task(router.serve(game_args)))
     http = SimpleNamespace(bind=args.bind, port=args.http_port, products=products)
     tasks.append(asyncio.create_task(bootstrap.serve(http)))

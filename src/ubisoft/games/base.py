@@ -43,6 +43,8 @@ class GameProfile:
     supports_discovery: bool = False
     proxy_services: tuple[str, ...] = ()
     bootstrap_section: str | None = None
+    # Default chat (IRC) port; None for titles without a chat server.
+    chat_port: int | None = None
     # Rooms created by the lobby server itself (0xd1 operation 12), rather
     # than by XIII's separate launcher registration.
     lobby_create: bool = False
@@ -92,10 +94,12 @@ class GameProfile:
         "routerip0", "routerport0", "routerlauncherport0", "natserverip0", "natserverport0")
 
     def bootstrap(self, address: str, router_port: int, launcher_port: int,
-                  nat_address: str | None, nat_port: int | None) -> bytes:
+                  nat_address: str | None, nat_port: int | None, chat_port: int | None = None) -> bytes:
         values = [address, router_port, launcher_port]
         if nat_address is not None and nat_port is not None:
             values.extend((nat_address, nat_port))
+            if chat_port is not None:
+                values.extend((address, chat_port))
         lines = [f"[{self.bootstrap_section}]"] if self.bootstrap_section else []
         lines.extend(f"{key}={value}" for key, value in zip(self.bootstrap_keys, values))
         return ("\r\n".join(lines) + "\r\n").encode("ascii")
@@ -147,6 +151,20 @@ class GameProfile:
     def parent_lobby(self) -> list:
         raise UnsupportedOperation(f"{self.slug} parent lobby is not implemented")
 
+    def player_info_id(self, name: str) -> str:
+        # Field 0 of the wait module's 0x13 player info. Earned in Blood
+        # reads it as the player's chat ID (IRCID); other titles get the name.
+        return name
+
+    def lobby_ids(self) -> tuple[str, ...]:
+        # Parent lobby group IDs. Earned in Blood has two, one per lobby
+        # type; every other title has one.
+        return ("1",)
+
+    def lobby_record(self, lobby: str, players: int) -> list:
+        # A parent lobby's record for titles with a member directory.
+        return self.parent_lobby(players)
+
     def launcher_groups(self) -> list:
         raise UnsupportedOperation(f"{self.slug} launcher groups are not implemented")
 
@@ -165,6 +183,12 @@ class GameProfile:
         # Operation 9: whether the reply lists the child rooms, and whether
         # the known members follow.
         return True, self.refresh_resends_members
+
+    def group_refresh_flags(self, values: list) -> str:
+        # The flags of an operation-9 reply (operation 53). 0x100 lists the
+        # child groups only; titles that parse the group's own record
+        # (flag 0x40) override this.
+        return "256"
 
     def friend_presence(self, in_room: bool) -> tuple[int, str]:
         # GS friend status and product for a player in this title's parent
