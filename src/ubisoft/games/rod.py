@@ -164,10 +164,10 @@ class RodProfile(GameProfile):
         return [str(room.room_id), ""]
 
     def room_join_failure(self, room, reason: str) -> list | None:
-        # 0x0041df90 gives reason 11 its own failure state (9).
-        if reason == "password":
-            return ["11", str(room.room_id), ""]
-        return None
+        # 0x0041df90 maps 7 to the unavailable/full state (8), and gives
+        # wrong-password reason 11 its own failure state (9).
+        code = {"password": "11", "full": "7"}.get(reason)
+        return None if code is None else [code, str(room.room_id), ""]
 
     def group_flags(self, flags: str) -> str:
         _uint(flags)

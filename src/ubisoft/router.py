@@ -1253,6 +1253,18 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                                              game_profile.slug, peer, room.room_id)
                                     continue
                                 member = (peer[0], wait_user.casefold())
+                                if not room.can_join(member):
+                                    # Reject before releasing the player's
+                                    # current room or changing any membership.
+                                    failure = game_profile.room_join_failure(room, "full")
+                                    LOG.info("room join refused game=%s peer=%s room=%d reason=full",
+                                             game_profile.slug, peer, room.room_id)
+                                    if failure is None:
+                                        break
+                                    payload = gsxor.encrypt(data.encode(["39", ["24", failure]]))
+                                    writer.write(response_header(header, payload, 0xd1) + payload)
+                                    await writer.drain()
+                                    continue
                                 if host_room is not None and host_room is not room:
                                     registry.unbind_host(host_room, host_connection)
                                     host_room = None

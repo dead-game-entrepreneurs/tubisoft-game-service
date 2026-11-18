@@ -10,6 +10,44 @@ def registration():
 
 
 class RoomRegistryTests(unittest.TestCase):
+    def test_capacity_reserves_owner_and_counts_shared_address_accounts_separately(self):
+        room = RoomRegistry().register("host", "192.0.2.1", registration())
+        room.max_players = "2"
+        owner = (room.peer_ip, room.owner)
+        first, second = ("192.0.2.1", "first"), ("192.0.2.1", "second")
+        self.assertTrue(room.can_join(first))
+        room.members.add(first)
+        self.assertFalse(room.can_join(second))
+        self.assertTrue(room.can_join(owner))
+        room.members.add(owner)
+        self.assertTrue(room.can_join(first))
+        self.assertEqual(room.group_fields()[13], "2")
+        room.members.remove(first)
+        self.assertTrue(room.can_join(second))
+
+    def test_reduced_limit_blocks_new_members_without_evicting_existing_members(self):
+        room = RoomRegistry().register("host", "192.0.2.1", registration())
+        first, second = ("192.0.2.2", "first"), ("192.0.2.3", "second")
+        room.members.add(first)
+        room.max_players = "1"
+        self.assertFalse(room.can_join(second))
+        self.assertTrue(room.can_join(first))
+        self.assertTrue(room.can_join((room.peer_ip, room.owner)))
+
+    def test_dedicated_capacity_counts_reported_players_and_pending_gs_members(self):
+        room = RoomRegistry().register("worker", "192.0.2.1", registration())
+        room.dedicated, room.max_players = True, "2"
+        first, second, third = (("192.0.2.2", name) for name in ("first", "second", "third"))
+        room.members.add(first)
+        self.assertTrue(room.can_join(second))  # No synthetic owner slot.
+        room.members.add(second)
+        self.assertFalse(room.can_join(third))  # Worker report can lag GS.
+        room.members.clear()
+        room.worker_players = 2
+        self.assertFalse(room.can_join(third))
+        room.members.add(first)
+        self.assertTrue(room.can_join(first))
+
     def test_host_connections_require_ownership_and_only_the_last_departure_removes_the_room(self):
         registry = RoomRegistry()
         room = registry.register("host", "198.51.100.2", registration())

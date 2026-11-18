@@ -158,6 +158,7 @@ refresh room records; it retains members rather than adding peers again.
 | 12, completion | Room ID, text, parent ID; creator immediately sends operation 24 | Reader `0x00374930`, callback `0x0041ded0` |
 | 24, game join | Room ID, password, numeric flags, boolean as number, game version; success ID/text | Sender `0x00368290`, reader `0x00373590`, callback `0x0041df90` |
 | 24, wrong password | Failure `[11, room ID, text]` | Reader failure offset; callback `0x0041df90` maps reason 11 to state 9 |
+| 24, full room | Failure `[7, room ID, text]`; lobby connection remains usable | Callback `0x0041df90` maps reason 7 to unavailable/full state 8 |
 | 50, member | Name, numeric flag, group ID, public/local addresses, binary player data, numeric u16 | `0x0037ec00` → `0x003b5280` |
 | 51, departure | Name and group ID; server ID comes from connection context | `0x003b55a0` clears negative room membership or removes positive lobby membership |
 | 66, player update | Name and binary player data | `0x003b5770` updates an existing record |
@@ -167,6 +168,11 @@ The native create caller uses type 5, zero spectators, game version `1.0` and
 SDK `RODPS21.0`. The service validates those identities and sizes, bounds text
 and additional data, and limits the advertised player count to 1–64 as a local
 resource bound. This is not a claim that the retail menu offers 64 players.
+Game joins enforce the host's configured room limit, including the owner's
+reserved slot before self-join. Existing members can retry without consuming
+another slot. A full-room refusal happens before changing the player's current
+membership or host binding; leaving releases a slot for the next admission.
+This check applies to hosted match rooms, separately from the parent directory.
 Passwords are held only with the transient room and are never logged.
 Protected rooms advertise flag `0x01`: browser `0x00346df0` calls
 `0x003b64f0`, whose predicate is the room flags at entry `+0x30` AND 1.
@@ -352,6 +358,8 @@ sockets. They cover shared XIII/187 accounts and isolated handoffs; parent and
 product catalogs; two members; protected creation, wrong-password retry and
 join; self membership ordering and counts; operation-66 updates; settings
 changes; both start-preparation acknowledgments; two match start/finish cycles;
+room capacity under concurrent joins, owner reservation, existing-member retries
+and refused switches that preserve a hosted room;
 guest leave/refresh/rejoin; owner disconnect/removal; and rejection of malformed
 player data before forwarding it. NAT fixtures verify the token transform and
 address order. These checks establish server behavior, not a race simulation.

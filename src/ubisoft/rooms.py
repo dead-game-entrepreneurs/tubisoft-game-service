@@ -44,17 +44,30 @@ class Room:
     worker_players: int = 0
     worker_run_id: str | None = None
 
+    @property
+    def player_count(self) -> int:
+        if self.dedicated:
+            return self.worker_players
+        return 1 + len(self.members - {(self.peer_ip, self.owner)})
+
+    def can_join(self, member: tuple[str, str]) -> bool:
+        """Check capacity; hosted rooms reserve the owner's slot before self-join."""
+        if member in self.members or (not self.dedicated and member == (self.peer_ip, self.owner)):
+            return True
+        # Dedicated worker reports can lag authenticated GS admissions. Do
+        # not admit another batch of pending players against the stale count.
+        occupied = max(self.player_count, len(self.members)) if self.dedicated else self.player_count
+        return occupied < int(self.max_players)
+
     def game_started_fields(self) -> list:
         return self.profile.game_started_fields(self)
 
     def group_fields(self) -> list:
         """Common GS group layout with title-specific advertisement flags."""
         advertised_flags = self.profile.group_flags(self.flags)
-        host = (self.peer_ip, self.owner)
-        player_count = self.worker_players if self.dedicated else 1 + len(self.members - {host})
         return [self.group_type, self.name, str(self.room_id), "1", self.parent_id,
                 advertised_flags, "2", self.owner_name or self.owner, "", self.product, self.info, "0",
-                self.max_players, str(player_count), self.max_spectators, "0",
+                self.max_players, str(self.player_count), self.max_spectators, "0",
                 self.game_version, self.sdk_version, self.public_address or self.peer_ip, self.local_ip or self.peer_ip]
 
 

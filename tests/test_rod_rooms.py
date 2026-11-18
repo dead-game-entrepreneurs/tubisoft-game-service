@@ -86,6 +86,7 @@ class RodRoomTests(unittest.TestCase):
         self.assertEqual(ROD.lobby_create_result(room), [str(room.room_id), "", "1"])
         self.assertEqual(ROD.room_join_result(room), [str(room.room_id), ""])
         self.assertEqual(ROD.room_join_failure(room, "password"), ["11", str(room.room_id), ""])
+        self.assertEqual(ROD.room_join_failure(room, "full"), ["7", str(room.room_id), ""])
         for index, invalid in ((0, "2"), (1, ""), (2, BIA.product), (3, "6"), (4, "0"),
                                (4, "65"), (5, "1"), (6, bytes(35)), (6, bytes(37)),
                                (7, "x" * 33), (8, "other"), (9, BIA.sdk_version), (10, bytes(16385))):
@@ -278,6 +279,14 @@ class RodLifecycleTests(unittest.IsolatedAsyncioTestCase):
         header, fields = await client.receive()
         self.assertEqual((header.message_type, fields), (0x3a, []))
 
+    async def operation_reply(self, client):
+        # Other parent members receive asynchronous room/player notices.
+        for _ in range(30):
+            _, event = await client.receive()
+            if event[0] not in ("50", "51", "53", "55", "66"):
+                return event
+        self.fail("no operation reply after room/player notices")
+
     async def test_account_errors_reply_without_creating_or_changing_accounts(self):
         await self.wait_login("AuthFixture")
         cases = (("AbsentFixture", "fixture-only", 4), ("AUTHFIXTURE", "incorrect", 15))
@@ -324,6 +333,75 @@ class RodLifecycleTests(unittest.IsolatedAsyncioTestCase):
         parent = ROD.parent_lobby()
         parent[13] = "1"  # The signed-in player is still in the parent lobby.
         await self.receive(lobby.wait, ["53", ["1", "256", ["0"], [parent]]])
+
+    async def test_full_room_rejects_extra_join_preserves_owner_slot_and_allows_retry(self):
+        host = await self.lobby_login("CapacityHost")
+        first = await self.lobby_login("CapacityFirst")
+        second = await self.lobby_login("CapacitySecond")
+
+        reply = self.operation_reply
+        values = create_fields(info=session_info(players=2))
+        values[4] = "2"
+        await host.send(0xd1, ["12", values])
+        rid = (await reply(host))[1][1][0]
+        join = ["24", [rid, "", "448", "0", "1.0"]]
+        # Both joiners race for the single non-owner slot before the owner
+        # self-joins. Account names differ but all share one observed IP.
+        await asyncio.gather(first.send(0xd1, join), second.send(0xd1, join))
+        results = await asyncio.gather(reply(first), reply(second))
+        self.assertCountEqual(results, [["38", ["24", [rid, ""]]],
+                                        ["39", ["24", ["7", rid, ""]]]])
+        winner, refused = ((first, second) if results[0][0] == "38" else (second, first))
+        await self.heartbeat(refused)
+        # A full room must still admit its reserved owner and an existing
+        # member's retry; neither adds an extra occupied slot.
+        for client in (host, winner):
+            await client.send(0xd1, join)
+            self.assertEqual(await reply(client), ["38", ["24", [rid, ""]]])
+            _, own = await client.receive()
+            self.assertEqual((own[0], own[1][0]), ("50", client.name))
+            _, room = await client.receive()
+            self.assertEqual((room[0], room[1][2][13]), ("53", "2"))
+        await refused.send(0xd1, join)
+        self.assertEqual(await reply(refused), ["39", ["24", ["7", rid, ""]]])
+        # Leaving releases the slot immediately, without dropping the
+        # refused client's sign-in/parent-lobby connection.
+        await winner.send(0xd1, ["8", [rid]])
+        self.assertEqual(await reply(winner), ["38", ["8", [rid]]])
+        await refused.send(0xd1, join)
+        self.assertEqual(await reply(refused), ["38", ["24", [rid, ""]]])
+        _, own = await refused.receive()
+        self.assertEqual((own[0], own[1][0]), ("50", refused.name))
+        _, room = await refused.receive()
+        self.assertEqual((room[0], room[1][2][13]), ("53", "2"))
+
+    async def test_refused_switch_to_full_room_preserves_current_hosted_room(self):
+        target = await self.lobby_login("SwitchTarget")
+        owner = await self.lobby_login("SwitchOwner")
+        reply = self.operation_reply
+
+        async def create_one_player_room(client):
+            values = create_fields(info=session_info(players=1))
+            values[4] = "1"
+            await client.send(0xd1, ["12", values])
+            rid = (await reply(client))[1][1][0]
+            await client.send(0xd1, ["24", [rid, "", "448", "0", "1.0"]])
+            self.assertEqual(await reply(client), ["38", ["24", [rid, ""]]])
+            return rid
+
+        target_id = await create_one_player_room(target)
+        source_id = await create_one_player_room(owner)
+        await owner.send(0xd1, ["24", [target_id, "", "448", "0", "1.0"]])
+        self.assertEqual(await reply(owner), ["39", ["24", ["7", target_id, ""]]])
+        # Refusal must occur before unbinding/removing the owner's current
+        # room, or discarding its existing joined-room membership.
+        await owner.send(0xd1, ["31", [source_id, "64", session_info(players=1, map_id=2)]])
+        self.assertEqual(await reply(owner), ["38", ["31", [source_id]]])
+        await owner.send(0xd1, ["42", [owner.info]])
+        self.assertEqual(await reply(owner), ["38", ["42"]])
+        await owner.wait.send(0xd1, ["109", [ROD.product]])
+        _, catalog = await owner.wait.receive()
+        self.assertEqual({record[2] for record in catalog[1][3]}, {"1", source_id, target_id})
 
     async def test_two_players_protected_room_refresh_next_round_and_host_exit(self):
         host = await self.lobby_login("HostFixture")
